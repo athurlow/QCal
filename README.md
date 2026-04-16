@@ -9,7 +9,13 @@ on the local `cudaq` simulator.
 ┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
 │  Upload │──▶│   Analyzer   │──▶│  Code gen    │──▶│  Simulator   │
 │ (img/csv│   │ (Ising VLM)  │   │  (CUDA-Q)    │   │ (cudaq.sample│
-└─────────┘   └──────────────┘   └──────────────┘   └──────────────┘
+└─────────┘   └──────┬───────┘   └──────────────┘   └──────────────┘
+                     │
+                     ▼
+             ┌───────────────────────────────┐
+             │   Decoder  (optional)         │
+             │   Ising 3D CNN → PyMatching   │
+             └───────────────────────────────┘
 ```
 
 ## Layout
@@ -21,6 +27,7 @@ qcal/
   analyzer.py          # Ising VLM (local HF or NIM)
   codegen.py           # CUDA-Q script generator
   simulator.py         # executes the generated script
+  decoder.py           # Ising 3D CNN pre-decoder + MWPM
 requirements.txt
 ```
 
@@ -99,17 +106,50 @@ Open <http://localhost:7860>. Upload a calibration plot, click
 **Analyze calibration**, inspect the generated CUDA-Q script, then click
 **Run simulation** to execute it on the `cudaq` simulator.
 
+## Error-correction decoder (optional stage)
+
+After a successful calibration analysis, expand the
+**"Error-correction decoder (Ising 3D CNN)"** panel to run an NVIDIA Ising
+surface-code pre-decoder on a synthetic syndrome volume. The panel lets you:
+
+- Pick the `fast` (~912k params) or `accurate` (~1.79M params) variant.
+- Set code distance (d), syndrome rounds (T), physical error rate (p),
+  and shot count.
+- See before/after metrics: syndrome density, CNN inference time, MWPM
+  decode time on raw vs denoised syndromes (via PyMatching), and a
+  logical-error-rate proxy.
+- View a side-by-side plot of the raw and denoised syndrome slices plus a
+  before/after bar chart.
+
+The `p` slider auto-populates from the calibration analysis (larger drive
+amplitude mismatch → larger `p`). Running the decoder regenerates the
+CUDA-Q script with a header block documenting the decoder variant and
+improvement metrics.
+
+**What's synthetic and what's real:** syndromes are sampled from Bernoulli(p)
+with a few injected correlated chains, the matching graph is a toy 6-nearest-
+neighbor graph (not a stim-generated DEM), and "LER" is a syndrome-weight
+proxy. If the Ising decoder weights aren't reachable, the module falls back
+to a 3D neighbor-support sparsifier so the pipeline still demos end-to-end.
+
+**Swapping in real data:** call
+`qcal.decoder.run_decoder(...)` directly with your own `numpy` volume in place
+of the generated one, or replace `generate_syndromes()` with a stim-backed
+sampler.
+
 ## Environment variables
 
-| Variable            | Purpose                                               |
-| ------------------- | ----------------------------------------------------- |
-| `NVIDIA_API_KEY`    | API key for the NIM endpoint (backend = `nim`)        |
-| `QCAL_MODEL_ID`     | Override local HF model id                            |
-| `QCAL_NIM_MODEL`    | Override NIM model name                               |
-| `QCAL_NIM_ENDPOINT` | Override NIM base URL                                 |
-| `QCAL_HOST`         | Gradio bind host (default `0.0.0.0`)                  |
-| `QCAL_PORT`         | Gradio port (default `7860`)                          |
-| `QCAL_SHARE`        | Set to `1` to enable Gradio public share link         |
+| Variable                    | Purpose                                          |
+| --------------------------- | ------------------------------------------------ |
+| `NVIDIA_API_KEY`            | API key for the NIM endpoint (backend = `nim`)   |
+| `QCAL_MODEL_ID`             | Override local HF calibration VLM id             |
+| `QCAL_NIM_MODEL`            | Override NIM model name                          |
+| `QCAL_NIM_ENDPOINT`         | Override NIM base URL                            |
+| `QCAL_DECODER_FAST_ID`      | Override HF id for the fast decoder variant      |
+| `QCAL_DECODER_ACCURATE_ID`  | Override HF id for the accurate decoder variant  |
+| `QCAL_HOST`                 | Gradio bind host (default `0.0.0.0`)             |
+| `QCAL_PORT`                 | Gradio port (default `7860`)                     |
+| `QCAL_SHARE`                | Set to `1` to enable Gradio public share link    |
 
 ## Input formats
 
@@ -134,6 +174,28 @@ Module boundaries to keep the MVP clean:
 
 - `qcal.data` — file I/O and normalization only.
 - `qcal.analyzer` — model calls; returns a strict JSON dict.
-- `qcal.codegen` — pure function: analysis dict → script text.
+- `qcal.codegen` — pure function: analysis dict (+ optional decoder info) → script text.
 - `qcal.simulator` — executes script text; never imports `cudaq` itself.
+- `qcal.decoder` — Ising 3D CNN sparsifier + optional PyMatching MWPM.
 - `app.py` — UI glue only; no ML logic.
+
+### Testing the decoder stage
+
+Without launching the UI:
+
+```python
+from qcal.decoder import run_decoder
+
+r = run_decoder(variant="fast", distance=5, rounds=5, error_rate=0.01, n_shots=64)
+print(r.markdown())
+print("density reduction:", round(r.density_reduction * 100, 1), "%")
+```
+
+Through the UI:
+
+1. Upload any calibration plot and click **Analyze calibration**.
+2. Expand **Error-correction decoder (Ising 3D CNN)**.
+3. Pick `fast` or `accurate`, adjust `d` / `T` / `p`, click **Run decoder**.
+4. Inspect the metrics panel (density reduction, MWPM timing, LER proxy
+   improvement) and the side-by-side plot.
+5. The CUDA-Q script auto-refreshes with a decoder header block.

@@ -10,5 +10,7 @@ pandas>=2.2.0
 matplotlib>=3.8.0
 requests>=2.32.0
 python-dotenv>=1.0.1
+# Decoder stage — MWPM on the denoised syndrome volume:
+pymatching>=2.2.0
 # CUDA-Q is installed separately (see README). Pin here if wheels are available:
 # cudaq>=0.8.0

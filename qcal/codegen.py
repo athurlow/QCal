@@ -17,6 +17,7 @@ Auto-generated CUDA-Q calibration script from QCal Copilot.
 Experiment: {experiment}
 Qubit: {qubit_id}
 Notes: {notes}
+{decoder_header}
 """
 
 import cudaq
@@ -89,8 +90,31 @@ def _params_repr(params: dict[str, Any]) -> str:
     return dumped
 
 
-def generate_script(analysis: dict[str, Any]) -> str:
-    """Build the CUDA-Q script text from analyzer output."""
+def _decoder_header(decoder_info: dict[str, Any] | None) -> str:
+    """Format a header block summarizing the decoder stage, if present."""
+    if not decoder_info:
+        return ""
+    variant = decoder_info.get("variant", "n/a")
+    model_id = decoder_info.get("model_id", "n/a")
+    distance = decoder_info.get("distance", "n/a")
+    rounds = decoder_info.get("rounds", "n/a")
+    density_reduction = decoder_info.get("density_reduction", 0.0)
+    ler_improvement = decoder_info.get("ler_improvement", 1.0)
+    return (
+        "\nError-correction decoder (applied upstream):\n"
+        f"  variant:           {variant}\n"
+        f"  model_id:          {model_id}\n"
+        f"  surface code:      d={distance}, rounds={rounds}\n"
+        f"  syndrome density:  {density_reduction*100:.1f}% reduction\n"
+        f"  LER proxy:         {ler_improvement:.2f}x improvement"
+    )
+
+
+def generate_script(
+    analysis: dict[str, Any],
+    decoder_info: dict[str, Any] | None = None,
+) -> str:
+    """Build the CUDA-Q script text from analyzer (+ optional decoder) output."""
     experiment = analysis.get("experiment") or "unspecified"
     qubit_id = analysis.get("qubit_id") or "q0"
     notes = (analysis.get("notes") or "").replace('"""', "'''")
@@ -101,5 +125,6 @@ def generate_script(analysis: dict[str, Any]) -> str:
         qubit_id=qubit_id,
         notes=textwrap.shorten(notes, width=240, placeholder="…"),
         params_repr=_params_repr(params),
+        decoder_header=_decoder_header(decoder_info),
     )
     return script
