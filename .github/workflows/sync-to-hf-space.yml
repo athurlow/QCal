@@ -1,0 +1,34 @@
+name: Sync to Hugging Face Space
+
+# Mirrors this repo to https://huggingface.co/spaces/athurlow/qcal so the
+# Space rebuilds whenever you push here. The Space itself is a git repo;
+# this workflow just force-pushes the latest commit to its `main` branch.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/qcal-copilot-mvp-OZ9wj
+  workflow_dispatch:  # allow manual sync from the Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo (full history — HF rejects shallow clones)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USER: athurlow
+          HF_SPACE: qcal
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add space "https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/${HF_USER}/${HF_SPACE}"
+          # Force-push the current branch onto the Space's main branch.
+          git push --force space "HEAD:main"
