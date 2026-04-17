@@ -1,3 +1,16 @@
+---
+title: QCal Copilot
+emoji: ⚛️
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: 4.44.0
+app_file: app.py
+pinned: false
+license: mit
+short_description: AI-assisted quantum calibration + CUDA-Q + Ising decoder
+---
+
 # QCal Copilot — MVP
 
 AI-assisted quantum calibration. Upload a calibration plot or CSV, get an
@@ -105,6 +118,34 @@ python app.py
 Open <http://localhost:7860>. Upload a calibration plot, click
 **Analyze calibration**, inspect the generated CUDA-Q script, then click
 **Run simulation** to execute it on the `cudaq` simulator.
+
+## Deploy to Hugging Face Spaces
+
+This repo is ready to deploy as a Gradio Space (e.g. `athurlow/qcal`). The
+YAML frontmatter at the top of this README tells Spaces which SDK to use and
+which file to run.
+
+1. Push the repo to the Space:
+
+   ```bash
+   git remote add space https://huggingface.co/spaces/athurlow/qcal
+   git push space claude/qcal-copilot-mvp-OZ9wj:main
+   ```
+2. In the Space **Settings → Variables and secrets**, add:
+   - `NVIDIA_API_KEY` — required; the hosted Space can't download the 35B
+     VLM locally, so the app should call the NIM endpoint.
+3. (Optional) Override model ids via Space secrets if you have custom
+   deployments: `QCAL_NIM_MODEL`, `QCAL_DECODER_FAST_ID`,
+   `QCAL_DECODER_ACCURATE_ID`.
+4. **Hardware:** a free CPU Space runs the decoder's small CNN (~1.8M params)
+   and the NIM-backed analyzer fine. A GPU Space (T4 or better) is only
+   needed if you want to host the calibration VLM locally; `cudaq` requires
+   an NVIDIA GPU Space to run the simulation stage.
+
+The app falls back gracefully when dependencies are missing: no
+`NVIDIA_API_KEY` → analyzer reports the missing key; no `cudaq` → simulator
+button surfaces the install hint; no `pymatching` → decoder shows density
+metrics without MWPM timing.
 
 ## Error-correction decoder (optional stage)
 
