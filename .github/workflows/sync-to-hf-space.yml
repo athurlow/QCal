@@ -11,6 +11,11 @@ on:
       - claude/qcal-copilot-mvp-OZ9wj
   workflow_dispatch:  # allow manual sync from the Actions tab
 
+env:
+  # Opt in to Node 24 now so JS actions (checkout@v4) don't emit the Node 20
+  # deprecation warning. Safe to remove once Node 24 is the runner default.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   sync:
     runs-on: ubuntu-latest
