@@ -1,0 +1,199 @@
+name: Release to PyPI
+
+# Tag-triggered release for `qcal-copilot`. Pipeline:
+#
+#   build → publish-testpypi → smoke-test-testpypi → publish-pypi → github-release
+#
+# Uses PyPI Trusted Publishing (OIDC), so no long-lived tokens in secrets.
+# BEFORE this workflow can publish, configure the trusted publisher once on
+# each index:
+#
+#   TestPyPI: https://test.pypi.org/manage/account/publishing/
+#   PyPI:     https://pypi.org/manage/account/publishing/
+#
+# For both, register:
+#   repo owner:    athurlow
+#   repo name:     qcal
+#   workflow:      release.yml
+#   environment:   pypi           (for PyPI)
+#                  testpypi       (for TestPyPI)
+#
+# Matching GitHub environments `pypi` and `testpypi` must exist with
+# `id-token: write` permitted — that's the only way OIDC tokens get minted.
+#
+# Manual dry-run: Actions tab → Run workflow → set `testpypi_only: true`
+# to publish a pre-release to TestPyPI without touching PyPI. The tag push
+# path always publishes to both.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      testpypi_only:
+        description: "Publish to TestPyPI only (skip PyPI + GitHub release)"
+        type: boolean
+        default: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1. Build sdist + wheel once. Downstream jobs consume the artifact so the
+  #    exact bytes published to TestPyPI are the same ones published to PyPI.
+  # -------------------------------------------------------------------------
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      # Fail the release if pyproject.toml's version doesn't match the tag,
+      # so we never ship a 0.1.0 wheel tagged as v0.2.0 (or vice versa).
+      # Skipped on workflow_dispatch since there's no tag to compare against.
+      - name: Verify pyproject version matches tag
+        if: github.event_name == 'push'
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          pkg_version=$(python -c "
+          import tomllib, pathlib
+          print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])
+          ")
+          if [ "${tag_version}" != "${pkg_version}" ]; then
+            echo "::error::Tag v${tag_version} does not match pyproject.toml version ${pkg_version}."
+            echo "Bump pyproject.toml or retag before pushing."
+            exit 1
+          fi
+          echo "Version check OK: ${pkg_version}"
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: List built artifacts
+        run: ls -la dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # -------------------------------------------------------------------------
+  # 2. Publish to TestPyPI first, always.
+  # -------------------------------------------------------------------------
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/qcal-copilot/
+    permissions:
+      id-token: write  # required for Trusted Publishing OIDC
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # TestPyPI sometimes has leftover versions from prior dry runs;
+          # don't fail the release over it.
+          skip-existing: true
+
+  # -------------------------------------------------------------------------
+  # 3. Smoke-test: install from TestPyPI in a clean runner and assert that
+  #    the CLI + Python imports work. If this fails, do NOT publish to PyPI.
+  # -------------------------------------------------------------------------
+  smoke-test-testpypi:
+    name: Smoke-test TestPyPI install
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install from TestPyPI
+        run: |
+          # TestPyPI doesn't mirror transitive deps — fall back to PyPI for those.
+          # Retry a few times because TestPyPI's CDN takes 30-60s to propagate
+          # a fresh upload before the new version becomes resolvable.
+          for attempt in 1 2 3 4 5; do
+            if python -m pip install \
+                --index-url https://test.pypi.org/simple/ \
+                --extra-index-url https://pypi.org/simple/ \
+                qcal-copilot; then
+              exit 0
+            fi
+            echo "Attempt ${attempt} failed, sleeping before retry..."
+            sleep 15
+          done
+          echo "::error::pip install from TestPyPI failed after 5 attempts."
+          exit 1
+
+      - name: Verify CLI + imports
+        run: |
+          qcal version
+          python -c "
+          import qcal
+          from qcal import analyzer, codegen, data, decoder, fit, simulator, config, cli
+          assert qcal.__version__, 'missing __version__'
+          print('smoke test OK, version =', qcal.__version__)
+          "
+
+  # -------------------------------------------------------------------------
+  # 4. Publish to real PyPI. Skipped on workflow_dispatch dry runs.
+  # -------------------------------------------------------------------------
+  publish-pypi:
+    name: Publish to PyPI
+    needs: smoke-test-testpypi
+    if: github.event_name == 'push' || github.event.inputs.testpypi_only != 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/qcal-copilot/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # -------------------------------------------------------------------------
+  # 5. Attach the built wheel + sdist to a GitHub Release, with auto-generated
+  #    notes. Tag-push only.
+  # -------------------------------------------------------------------------
+  github-release:
+    name: Create GitHub Release
+    needs: publish-pypi
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
