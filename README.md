@@ -11,12 +11,18 @@ license: mit
 short_description: AI-assisted quantum calibration + CUDA-Q + Ising decoder
 ---
 
-# QCal Copilot — MVP
+# QCal Copilot
 
-AI-assisted quantum calibration. Upload a calibration plot or CSV, get an
-analysis from NVIDIA's Ising Calibration vision-language model, receive a
-ready-to-run CUDA-Q Python script with the suggested tuning, and execute it
-on the local `cudaq` simulator.
+AI-assisted quantum calibration. Point it at a raw `.npy` trace (or image, or
+CSV) and it renders a plot, auto-fits the standard calibration model (Rabi,
+Ramsey, T1, T2-echo), hands both to NVIDIA's Ising Calibration VLM, and emits a
+ready-to-run CUDA-Q script seeded with the recommended tuning.
+
+Ships three ways:
+
+- **`pip install qcal-copilot`** — CLI + Python API (`qcal analyze`, `from qcal.data import from_npy`).
+- **Gradio web app** — `qcal serve` or [the hosted Space](https://huggingface.co/spaces/athurlow/qcal).
+- **Jupyter** — see `examples/` for Rabi, Ramsey-drift, and readout-IQ notebooks.
 
 ```
 ┌─────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
@@ -35,17 +41,75 @@ on the local `cudaq` simulator.
 
 ```
 app.py                 # Gradio UI + pipeline wiring
-qcal/
-  data.py              # image/CSV preprocessing
+pyproject.toml         # package metadata + CLI entry point
+src/qcal/
+  data.py              # image/CSV/.npy/.npz preprocessing + plot rendering
+  fit.py               # scipy-backed curve fits (Rabi/Ramsey/T1/T2)
   analyzer.py          # Ising VLM (local HF or NIM)
   codegen.py           # CUDA-Q script generator
   simulator.py         # executes the generated script
   decoder.py           # Ising 3D CNN pre-decoder + MWPM
+  config.py            # persists NIM API key to ~/.config/qcal/config.toml
+  cli.py               # `qcal ...` Typer commands
+examples/              # Rabi / Ramsey-drift / readout-IQ notebooks
 requirements.txt
 ```
 
 The analyzer and simulator are decoupled, so adding a later-stage 3D CNN
 decoder or swapping in a different model is a one-file change.
+
+## Install (pip)
+
+```bash
+pip install qcal-copilot                   # CLI + NIM backend
+pip install "qcal-copilot[decoder]"        # + PyMatching
+pip install "qcal-copilot[gui]"            # + Gradio (for `qcal serve`)
+pip install "qcal-copilot[ml]"             # + torch + transformers (local 35B VLM)
+pip install "qcal-copilot[all]"            # everything
+```
+
+Store your NIM API key (or set `NVIDIA_API_KEY` in your shell):
+
+```bash
+qcal login           # prompts for the key, saves to ~/.config/qcal/config.toml (0600)
+```
+
+### CLI
+
+```bash
+# Rabi trace stored as a 1-D .npy with a matching time axis
+qcal analyze rabi.npy --experiment rabi --out report.md --script rabi.py
+
+# .npz archive with x, y arrays
+qcal analyze ramsey.npz --experiment ramsey --json out.json
+
+# Regenerate the CUDA-Q script from a saved analysis
+qcal generate out.json --out rabi.py
+
+# Run the Ising 3D CNN decoder on a synthetic syndrome volume
+qcal decode --variant fast --distance 5 --rounds 5 --p 0.005 --shots 128
+
+# Launch the Gradio UI locally (needs [gui])
+qcal serve
+```
+
+### Python
+
+```python
+from qcal.data import from_npy
+from qcal.analyzer import analyze_payload
+from qcal.codegen import generate_script
+
+payload = from_npy("rabi.npy", experiment_type="rabi",
+                   x_path="rabi_time.npy", x_unit="s")
+payload.fit             # FitResult: {amplitude, freq_per_s, tau_s, offset, phase_rad, R^2}
+
+result = analyze_payload(payload, backend="auto")   # "nim" if key present, else local
+print(result.markdown())
+print(generate_script(result.parsed))
+```
+
+Both `payload.fit` and `result` render as rich markdown in Jupyter.
 
 ## Quick start
 
@@ -191,9 +255,27 @@ sampler.
 | `QCAL_HOST`                 | Gradio bind host (default `0.0.0.0`)             |
 | `QCAL_PORT`                 | Gradio port (default `7860`)                     |
 | `QCAL_SHARE`                | Set to `1` to enable Gradio public share link    |
+| `QCAL_CONFIG_PATH`          | Override config file path (default `~/.config/qcal/config.toml`) |
+| `NIM_API_KEY`               | Alias for `NVIDIA_API_KEY`                       |
 
 ## Input formats
 
+- **`.npy` / `.npz`** (preferred for real-hardware workflows) — Raw measurement
+  arrays from your control stack. Pass `--experiment` (or `experiment_type=`)
+  so `qcal` knows the expected shape and fit model:
+
+  | `experiment_type`      | Array shape   | Auto-fit model                               |
+  |------------------------|---------------|----------------------------------------------|
+  | `rabi`                 | `(N,)`        | damped sine → `{amplitude, freq, tau, offset, phase}` |
+  | `ramsey`               | `(N,)`        | damped cosine → `{amplitude, detuning, t2star, offset, phase}` |
+  | `t1`, `t2_echo`        | `(N,)`        | exponential decay → `{amplitude, tau, offset}` |
+  | `rabi_chevron`         | `(F, A)`      | heatmap (no fit)                             |
+  | `readout_iq`           | `(N, 2)`      | scatter (no fit)                             |
+  | `iq_trace`, `resonator_spec`, `unknown` | `(N,)` | plot only |
+
+  `.npz` should contain at least a `y` key and optionally an `x` key. Disable
+  fitting for air-gapped installs without `scipy` via `--no-fit` (CLI) or
+  `from_npy(..., fit=False)` (Python).
 - **Images** — `.png`, `.jpg`, `.jpeg`, `.bmp`, `.tiff`, `.webp`. Any
   calibration artifact the VLM understands: Rabi chevrons, T1/T2 decays,
   Ramsey fringes, readout histograms, resonator spectroscopy, oscilloscope

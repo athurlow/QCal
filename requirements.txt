@@ -1,16 +1,15 @@
-gradio>=4.44.0
-transformers>=4.45.0
-torch>=2.3.0
-torchvision>=0.18.0
-torchaudio>=2.3.0
-accelerate>=0.33.0
-pillow>=10.0.0
-numpy>=1.26.0
-pandas>=2.2.0
-matplotlib>=3.8.0
-requests>=2.32.0
-python-dotenv>=1.0.1
-# Decoder stage — MWPM on the denoised syndrome volume:
-pymatching>=2.2.0
-# CUDA-Q is installed separately (see README). Pin here if wheels are available:
-# cudaq>=0.8.0
+# HF Space / quick-start requirements. Installs qcal-copilot from this repo
+# in editable mode plus the extras the Gradio app needs.
+#
+# For a lighter install (CLI + NIM only, no local VLM weights), use:
+#   pip install .[decoder]
+-e .[decoder,gui]
+
+# Extras pulled in via the editable install above:
+#   numpy, pandas, matplotlib, pillow, requests, scipy, typer, platformdirs
+#   gradio (via [gui]), pymatching (via [decoder])
+#
+# Add [ml] to also install torch + transformers for local Ising VLM weights:
+#   -e .[ml,decoder,gui]
+#
+# CUDA-Q is installed separately (see README).

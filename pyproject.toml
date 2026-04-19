@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qcal-copilot"
+version = "0.1.0"
+description = "AI-assisted quantum calibration: Ising VLM analysis, surface-code decoder, and CUDA-Q codegen for calibration engineers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "QCal Copilot contributors" }]
+keywords = ["quantum", "calibration", "cudaq", "ising", "nvidia", "surface-code"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "matplotlib>=3.8",
+    "pillow>=10.0",
+    "requests>=2.32",
+    "scipy>=1.11",              # curve_fit for rabi/ramsey/t1/t2 auto-fitting
+    "typer>=0.12",              # CLI
+    "platformdirs>=4.0",        # ~/.config/qcal lookup
+    "tomli>=2.0; python_version<'3.11'",
+]
+
+[project.optional-dependencies]
+# Vision-language model path — needed for local inference of the Ising VLM.
+# Users who only want NIM can skip this and save ~2 GB of installs.
+ml = [
+    "torch>=2.3",
+    "torchvision>=0.18",
+    "torchaudio>=2.3",
+    "transformers>=4.45",
+    "accelerate>=0.33",
+]
+
+# Surface-code decoder MWPM stage.
+decoder = [
+    "pymatching>=2.2",
+]
+
+# Gradio web UI (app.py). `qcal serve` needs this.
+gui = [
+    "gradio>=4.44",
+]
+
+# Integrations with common quantum frameworks. Phase 2 territory, but we
+# register the extra now so the import path is stable.
+integrations = []
+
+# Everything.
+all = [
+    "qcal-copilot[ml,decoder,gui,integrations]",
+]
+
+[project.scripts]
+qcal = "qcal.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/athurlow/qcal"
+Issues = "https://github.com/athurlow/qcal/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

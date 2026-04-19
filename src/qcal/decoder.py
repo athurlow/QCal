@@ -141,6 +141,9 @@ class DecoderResult:
         ]
         return "\n".join(lines)
 
+    def _repr_markdown_(self) -> str:  # Jupyter renders this directly
+        return self.markdown()
+
 
 # ---------------------------------------------------------------------------
 # Synthetic syndrome generation
