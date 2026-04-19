@@ -37,4 +37,13 @@ audioop-lts>=0.2.1; python_version >= "3.13"
 # huggingface-hub 0.30. Pin below that until we can upgrade Gradio.
 huggingface-hub>=0.23,<0.30
 
+# Starlette 0.40 made `request` the first positional arg of
+# `TemplateResponse`, but gradio 4.44.0 still calls it as
+# `TemplateResponse(name, context, ...)`. With a newer starlette the
+# context dict lands in the `name` slot and Jinja2 crashes with
+# "unhashable type: 'dict'" the moment the UI is requested. Pin to the
+# pre-break line; fastapi capped to match.
+starlette<0.40
+fastapi<0.113
+
 # CUDA-Q is installed separately on the Space (see README).
