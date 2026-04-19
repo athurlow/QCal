@@ -30,6 +30,25 @@ _SRC = Path(__file__).resolve().parent / "src"
 if _SRC.is_dir() and str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+# gradio 4.44.0 has a bug in `gradio_client.utils.get_type` that crashes when
+# a sub-schema is a bool (`additionalProperties: False`) — fixed in 4.44.1,
+# but HF Spaces pins 4.44.0. Wrap the function so bool schemas return "Any"
+# instead of raising "argument of type 'bool' is not iterable" on every page
+# load.
+try:
+    from gradio_client import utils as _gc_utils
+
+    _orig_get_type = _gc_utils.get_type
+
+    def _safe_get_type(schema):
+        if not isinstance(schema, dict):
+            return "Any"
+        return _orig_get_type(schema)
+
+    _gc_utils.get_type = _safe_get_type
+except Exception:  # noqa: BLE001 — best-effort; don't block startup
+    pass
+
 import gradio as gr
 
 from qcal import analyzer, codegen, data, decoder, simulator
@@ -270,6 +289,11 @@ def main() -> None:
         server_name=os.getenv("QCAL_HOST", "0.0.0.0"),
         server_port=int(os.getenv("QCAL_PORT", "7860")),
         share=os.getenv("QCAL_SHARE", "").lower() in {"1", "true", "yes"},
+        # Gradio 4.44.0's client-side schema serializer crashes on
+        # `additionalProperties: False` ("argument of type 'bool' is not
+        # iterable"); fixed in 4.44.1, but HF Spaces pins 4.44.0. Disabling
+        # the OpenAPI endpoint avoids the crash — the UI is unaffected.
+        show_api=False,
     )
 
 
