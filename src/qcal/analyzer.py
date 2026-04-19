@@ -79,6 +79,24 @@ class AnalysisResult:
     def markdown(self) -> str:
         if self.error:
             return f"**Analyzer error ({self.backend}):** {self.error}\n\n```\n{self.raw_text}\n```"
+        # The VLM returned 200 but the response wasn't parseable JSON (usually
+        # because the model wrote prose like "this doesn't look like a
+        # calibration plot"). Previously we'd render every field as 'n/a' with
+        # no indication of why — now surface the raw response so the user can
+        # see what the model actually said.
+        if not self.parsed:
+            snippet = (self.raw_text or "").strip() or "(empty response)"
+            if len(snippet) > 1200:
+                snippet = snippet[:1200] + "\n...[truncated]"
+            return (
+                f"**Analysis could not be parsed (backend: {self.backend}).** "
+                "The VLM returned a response but it wasn't valid JSON matching "
+                "the expected schema. Raw model output:\n\n"
+                f"```\n{snippet}\n```\n\n"
+                "_Tip: try a different image (Rabi/Ramsey/T1/T2/readout plots "
+                "work best), or re-run — the model occasionally flakes on "
+                "the first call after a cold start._"
+            )
         p = self.parsed
         lines = [
             f"**Experiment:** {p.get('experiment', 'n/a')}",
