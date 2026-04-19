@@ -20,6 +20,15 @@ Environment (optional):
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
+
+# On HF Spaces the build step only mounts requirements.txt, so `pip install -e .`
+# can't reach pyproject.toml. Put src/ on sys.path so `from qcal import ...`
+# resolves against the src-layout package without needing it installed.
+_SRC = Path(__file__).resolve().parent / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 import gradio as gr
 

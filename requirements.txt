@@ -1,15 +1,32 @@
-# HF Space / quick-start requirements. Installs qcal-copilot from this repo
-# in editable mode plus the extras the Gradio app needs.
+# HF Space / quick-start requirements.
 #
-# For a lighter install (CLI + NIM only, no local VLM weights), use:
-#   pip install .[decoder]
--e .[decoder,gui]
+# We DON'T use `-e .[...]` here because HF Spaces only mounts requirements.txt
+# during the pip-install build step — pyproject.toml isn't available yet — and
+# the editable install fails with "file:///app does not appear to be a Python
+# project". Instead we list the deps directly; `app.py` puts `src/` on sys.path
+# at import time so `from qcal import ...` still resolves.
+#
+# For a proper pip install (CLI + Python API), use:
+#   pip install qcal-copilot                   # core + NIM
+#   pip install "qcal-copilot[decoder]"        # + PyMatching
+#   pip install "qcal-copilot[gui]"            # + Gradio
+#   pip install "qcal-copilot[ml]"             # + torch + transformers
+#   pip install "qcal-copilot[all]"            # everything
 
-# Extras pulled in via the editable install above:
-#   numpy, pandas, matplotlib, pillow, requests, scipy, typer, platformdirs
-#   gradio (via [gui]), pymatching (via [decoder])
-#
-# Add [ml] to also install torch + transformers for local Ising VLM weights:
-#   -e .[ml,decoder,gui]
-#
-# CUDA-Q is installed separately (see README).
+# Core (kept in sync with pyproject.toml [dependencies])
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+pillow>=10.0
+requests>=2.32
+scipy>=1.11
+typer>=0.12
+platformdirs>=4.0
+tabulate>=0.9          # pandas.DataFrame.to_markdown
+
+# [decoder]
+pymatching>=2.2
+
+# [gui] — HF Space's bootstrap pins gradio==4.44.0, so don't override it here.
+
+# CUDA-Q is installed separately on the Space (see README).
