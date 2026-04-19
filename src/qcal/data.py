@@ -127,6 +127,62 @@ def _render_table_as_image(df: pd.DataFrame) -> Image.Image:
     return Image.open(buf).convert("RGB")
 
 
+def _render_csv_for_vlm(
+    df: pd.DataFrame,
+    *,
+    experiment_type: str = "unknown",
+    title: Optional[str] = None,
+) -> Image.Image:
+    """Render a user-uploaded CSV as whatever image the VLM can actually analyze.
+
+    The Ising Calibration VLM is trained on *plots* (Rabi traces, T1 decays,
+    IQ scatter, etc.), not on screenshots of numeric tables — feeding it a
+    table grid drops recognition confidence to ~0.2 and produces the "no clear
+    oscillations" failure mode. So for common CSV shapes we render a proper
+    line or scatter plot; only truly arbitrary tables fall back to the grid.
+    """
+    import matplotlib.pyplot as plt  # noqa: F401 — keeps mpl import local
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+    # Two numeric columns: classic sweep (x, y). Covers Rabi / Ramsey / T1 / T2
+    # / resonator sweeps out of the box.
+    if len(numeric_cols) == 2:
+        x_col, y_col = numeric_cols
+        return _render_line(
+            df[y_col].to_numpy(),
+            df[x_col].to_numpy(),
+            experiment=experiment_type,
+            x_label=str(x_col),
+            y_label=str(y_col),
+            title=title,
+            fit=None,
+        )
+
+    # Readout IQ: two columns named like I/Q (any case, any order).
+    lower = {c.lower(): c for c in df.columns}
+    if "i" in lower and "q" in lower:
+        iq = df[[lower["i"], lower["q"]]].to_numpy()
+        return _render_scatter(iq, title=title)
+
+    # Single numeric column: plot vs row index.
+    if len(numeric_cols) == 1:
+        y_col = numeric_cols[0]
+        return _render_line(
+            df[y_col].to_numpy(),
+            None,
+            experiment=experiment_type,
+            x_label="sample index",
+            y_label=str(y_col),
+            title=title,
+            fit=None,
+        )
+
+    # Fall back to the table screenshot for wide/categorical tables the VLM
+    # probably can't interpret anyway.
+    return _render_table_as_image(df)
+
+
 def _fig_to_pil(fig) -> Image.Image:
     import matplotlib.pyplot as plt
 
@@ -449,7 +505,7 @@ def load_payload(
     if ext in SUPPORTED_TABLE_EXTS:
         sep = "," if ext == ".csv" else "\t"
         df = pd.read_csv(path, sep=sep)
-        img = _render_table_as_image(df)
+        img = _render_csv_for_vlm(df, experiment_type=experiment_type, title=name)
         return CalibrationPayload(image=img, table=df, source_name=name, kind="csv")
 
     if ext == ".npy":

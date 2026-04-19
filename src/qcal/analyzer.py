@@ -57,8 +57,21 @@ Only output the JSON. Do not wrap it in markdown fences.
 """
 
 USER_PROMPT_TEMPLATE = (
-    "Analyze this quantum calibration artifact ({source}) and return the JSON "
-    "described in the system prompt.{extra}"
+    "Analyze this quantum calibration artifact ({source}). "
+    "Respond with a SINGLE JSON object and nothing else — no prose before or "
+    "after, no markdown fences, no bullet points. The JSON must match this "
+    "schema exactly:\n\n"
+    "{{\n"
+    '  "experiment": "<string>",\n'
+    '  "qubit_id": "<string or null>",\n'
+    '  "issues": ["<string>", ...],\n'
+    '  "metrics": {{"<name>": "<value with units>", ...}},\n'
+    '  "recommended_parameters": {{"<name>": <number or string>, ...}},\n'
+    '  "drift_prediction": "<string>",\n'
+    '  "confidence": <float 0..1>,\n'
+    '  "notes": "<1-3 sentences>"\n'
+    "}}\n\n"
+    "Begin your reply with `{{` and end with `}}`.{extra}"
 )
 
 
@@ -79,6 +92,24 @@ class AnalysisResult:
     def markdown(self) -> str:
         if self.error:
             return f"**Analyzer error ({self.backend}):** {self.error}\n\n```\n{self.raw_text}\n```"
+        # The VLM returned 200 but the response wasn't parseable JSON (usually
+        # because the model wrote prose like "this doesn't look like a
+        # calibration plot"). Previously we'd render every field as 'n/a' with
+        # no indication of why — now surface the raw response so the user can
+        # see what the model actually said.
+        if not self.parsed:
+            snippet = (self.raw_text or "").strip() or "(empty response)"
+            if len(snippet) > 1200:
+                snippet = snippet[:1200] + "\n...[truncated]"
+            return (
+                f"**Analysis could not be parsed (backend: {self.backend}).** "
+                "The VLM returned a response but it wasn't valid JSON matching "
+                "the expected schema. Raw model output:\n\n"
+                f"```\n{snippet}\n```\n\n"
+                "_Tip: try a different image (Rabi/Ramsey/T1/T2/readout plots "
+                "work best), or re-run — the model occasionally flakes on "
+                "the first call after a cold start._"
+            )
         p = self.parsed
         lines = [
             f"**Experiment:** {p.get('experiment', 'n/a')}",
@@ -157,6 +188,10 @@ def _analyze_via_nim(image: Image.Image, extra: str, source: str) -> AnalysisRes
         ],
         "temperature": 0.2,
         "max_tokens": 1024,
+        # Force JSON-only output on backends that support OpenAI's response
+        # format parameter (vLLM, most NIM deployments). The VLM otherwise
+        # sometimes replies with markdown prose despite the system prompt.
+        "response_format": {"type": "json_object"},
     }
     try:
         resp = requests.post(
