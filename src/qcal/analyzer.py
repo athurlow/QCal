@@ -20,6 +20,9 @@ from typing import Any, Optional
 
 from PIL import Image
 
+from .data import CalibrationPayload
+from .fit import FitResult
+
 
 DEFAULT_MODEL_ID = os.getenv("QCAL_MODEL_ID", "nvidia/Ising-Calibration-1-35B-A3B")
 NIM_ENDPOINT = os.getenv(
@@ -65,6 +68,9 @@ class AnalysisResult:
     parsed: dict = field(default_factory=dict)
     backend: str = "unknown"
     error: Optional[str] = None
+    fit_params: dict = field(default_factory=dict)  # auto-fit params, if any
+    fit: Optional[FitResult] = None                  # full FitResult for tooling
+    source: str = ""
 
     @property
     def ok(self) -> bool:
@@ -92,12 +98,21 @@ class AnalysisResult:
         for k, v in (p.get("recommended_parameters") or {}).items():
             lines.append(f"- `{k}` = {v}")
         lines.append("")
+        if self.fit is not None and self.fit.ok:
+            lines.append("**Auto-fit (numerical):**")
+            for k, v in self.fit.params.items():
+                lines.append(f"- `{k}` = {self.fit._fmt(v)}")
+            lines.append(f"- R² = {self.fit.fit_quality:.4f}")
+            lines.append("")
         lines.append(f"**Drift prediction:** {p.get('drift_prediction', 'n/a')}")
         lines.append("")
         lines.append(f"**Notes:** {p.get('notes', '')}")
         lines.append("")
         lines.append(f"_Backend: {self.backend}_")
         return "\n".join(lines)
+
+    def _repr_markdown_(self) -> str:  # Jupyter renders this directly
+        return self.markdown()
 
 
 # ---------------------------------------------------------------------------
@@ -242,28 +257,101 @@ def _safe_json(text: str) -> dict[str, Any]:
     return {}
 
 
+def _resolve_backend(choice: str) -> str:
+    if choice == "auto":
+        return "nim" if _resolve_api_key() else "local"
+    return choice
+
+
+def _resolve_api_key() -> Optional[str]:
+    """Look up the NIM API key. Env var wins; config file is a fallback.
+
+    Kept as a thin indirection so :mod:`qcal.config` can install itself later
+    without touching callers.
+    """
+    env = os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY")
+    if env:
+        return env
+    try:
+        from .config import get_api_key  # local import to avoid cycle at import-time
+
+        return get_api_key()
+    except Exception:  # noqa: BLE001 — config is optional, never block analysis on it
+        return None
+
+
 def analyze(
     image: Image.Image,
     source: str = "uploaded file",
     table_preview: Optional[str] = None,
     backend: str = "auto",
+    fit: Optional[FitResult] = None,
+    extra_context: Optional[str] = None,
 ) -> AnalysisResult:
     """Run the Ising Calibration VLM on a calibration image.
 
-    backend:
-      "auto"   — NIM if NVIDIA_API_KEY is set, else local HF
-      "nim"    — force NIM
-      "local"  — force local HF
+    Parameters
+    ----------
+    image
+        PIL image of the calibration artifact.
+    source
+        Short label for the input — shown in logs and the VLM prompt.
+    table_preview
+        Optional markdown table to append to the prompt (used for CSV input).
+    backend
+        ``"auto"`` — NIM if an API key is available, else local HF.
+        ``"nim"``  — force NIM. ``"local"`` — force local HF weights.
+    fit
+        Optional :class:`~qcal.fit.FitResult`; its summary is appended to the
+        prompt and stored on the returned :class:`AnalysisResult`.
+    extra_context
+        Any additional text to weave into the prompt (stats, metadata, …).
     """
     if image is None:
         return AnalysisResult(raw_text="", backend=backend, error="No image provided.")
 
-    extra = f"\n\nAccompanying table preview (markdown):\n{table_preview}" if table_preview else ""
+    bits: list[str] = []
+    if table_preview:
+        bits.append(f"Accompanying table preview (markdown):\n{table_preview}")
+    if fit is not None and fit.ok:
+        bits.append(fit.summary_text())
+    if extra_context:
+        bits.append(extra_context)
+    extra = ("\n\n" + "\n\n".join(bits)) if bits else ""
 
-    choice = backend
-    if choice == "auto":
-        choice = "nim" if os.getenv("NVIDIA_API_KEY") or os.getenv("NIM_API_KEY") else "local"
-
+    choice = _resolve_backend(backend)
     if choice == "nim":
-        return _analyze_via_nim(image, extra, source)
-    return _analyze_via_local(image, extra, source)
+        result = _analyze_via_nim(image, extra, source)
+    else:
+        result = _analyze_via_local(image, extra, source)
+
+    result.source = source
+    if fit is not None:
+        result.fit = fit
+        if fit.ok:
+            result.fit_params = dict(fit.params)
+    return result
+
+
+def analyze_payload(
+    payload: CalibrationPayload,
+    backend: str = "auto",
+) -> AnalysisResult:
+    """Convenience wrapper: analyze a :class:`CalibrationPayload` directly.
+
+    Pulls the image, fit, and numeric/metadata context from the payload and
+    hands them to :func:`analyze`. This is the entrypoint the CLI and the
+    notebook examples use.
+    """
+    if payload is None or payload.image is None:
+        return AnalysisResult(
+            raw_text="", backend=backend, error="No image in payload."
+        )
+    return analyze(
+        image=payload.image,
+        source=payload.source_name or "uploaded file",
+        table_preview=payload.table_preview_markdown() if payload.table is not None else None,
+        backend=backend,
+        fit=payload.fit,
+        extra_context=payload.prompt_context(),
+    )

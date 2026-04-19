@@ -1,0 +1,78 @@
+name: Sync to Hugging Face Space
+
+# Mirrors this repo to https://huggingface.co/spaces/athurlow/qcal so the
+# Space rebuilds whenever you push here. The Space itself is a git repo;
+# this workflow just force-pushes the latest commit to its `main` branch.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/qcal-copilot-mvp-OZ9wj
+  workflow_dispatch:  # allow manual sync from the Actions tab
+
+env:
+  # Opt in to Node 24 now so JS actions (checkout@v4) don't emit the Node 20
+  # deprecation warning. Safe to remove once Node 24 is the runner default.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo (full history — HF rejects shallow clones)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      # Fail fast with a human-readable message if HF_TOKEN is missing or
+      # obviously invalid, rather than letting `git push` die with a cryptic
+      # "Authentication required" 40 lines into the log.
+      - name: Preflight — HF_TOKEN sanity check
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "::error::HF_TOKEN secret is not set on this repository."
+            echo "Create a Write-scope token at https://huggingface.co/settings/tokens"
+            echo "and add it as a repo secret named HF_TOKEN (Settings → Secrets → Actions)."
+            exit 1
+          fi
+          # Real HF user tokens start with `hf_` and are >=20 chars. This
+          # catches pasted-in empties/quotes without hitting the API.
+          case "${HF_TOKEN}" in
+            hf_*) : ;;
+            *)
+              echo "::error::HF_TOKEN does not look like a Hugging Face user token (expected prefix 'hf_')."
+              echo "Regenerate at https://huggingface.co/settings/tokens with Write scope."
+              exit 1
+              ;;
+          esac
+          if [ "${#HF_TOKEN}" -lt 20 ]; then
+            echo "::error::HF_TOKEN is suspiciously short (${#HF_TOKEN} chars) — likely truncated."
+            exit 1
+          fi
+          # Verify the token is actually accepted by HF's whoami endpoint
+          # before we try to push. Saves wading through git's auth output.
+          http_code=$(curl -s -o /tmp/hf_whoami.json -w "%{http_code}" \
+            -H "Authorization: Bearer ${HF_TOKEN}" \
+            https://huggingface.co/api/whoami-v2)
+          if [ "${http_code}" != "200" ]; then
+            echo "::error::HF whoami returned ${http_code}. Token is invalid or revoked."
+            echo "Regenerate at https://huggingface.co/settings/tokens with Write scope."
+            exit 1
+          fi
+          echo "HF_TOKEN looks good (whoami returned 200)."
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USER: athurlow
+          HF_SPACE: qcal
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add space "https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/${HF_USER}/${HF_SPACE}"
+          # Force-push the current branch onto the Space's main branch.
+          git push --force space "HEAD:main"
