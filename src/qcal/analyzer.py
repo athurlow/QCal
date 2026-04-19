@@ -57,8 +57,21 @@ Only output the JSON. Do not wrap it in markdown fences.
 """
 
 USER_PROMPT_TEMPLATE = (
-    "Analyze this quantum calibration artifact ({source}) and return the JSON "
-    "described in the system prompt.{extra}"
+    "Analyze this quantum calibration artifact ({source}). "
+    "Respond with a SINGLE JSON object and nothing else — no prose before or "
+    "after, no markdown fences, no bullet points. The JSON must match this "
+    "schema exactly:\n\n"
+    "{{\n"
+    '  "experiment": "<string>",\n'
+    '  "qubit_id": "<string or null>",\n'
+    '  "issues": ["<string>", ...],\n'
+    '  "metrics": {{"<name>": "<value with units>", ...}},\n'
+    '  "recommended_parameters": {{"<name>": <number or string>, ...}},\n'
+    '  "drift_prediction": "<string>",\n'
+    '  "confidence": <float 0..1>,\n'
+    '  "notes": "<1-3 sentences>"\n'
+    "}}\n\n"
+    "Begin your reply with `{{` and end with `}}`.{extra}"
 )
 
 
@@ -175,6 +188,10 @@ def _analyze_via_nim(image: Image.Image, extra: str, source: str) -> AnalysisRes
         ],
         "temperature": 0.2,
         "max_tokens": 1024,
+        # Force JSON-only output on backends that support OpenAI's response
+        # format parameter (vLLM, most NIM deployments). The VLM otherwise
+        # sometimes replies with markdown prose despite the system prompt.
+        "response_format": {"type": "json_object"},
     }
     try:
         resp = requests.post(
