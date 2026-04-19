@@ -28,5 +28,9 @@ tabulate>=0.9          # pandas.DataFrame.to_markdown
 pymatching>=2.2
 
 # [gui] — HF Space's bootstrap pins gradio==4.44.0, so don't override it here.
+# Python 3.13 removed the stdlib `audioop` module (PEP 594), which pydub
+# (pulled in by gradio) still imports at load time. Install the backport
+# on 3.13+ so the app starts. Harmless on 3.10–3.12.
+audioop-lts>=0.2.1; python_version >= "3.13"
 
 # CUDA-Q is installed separately on the Space (see README).
